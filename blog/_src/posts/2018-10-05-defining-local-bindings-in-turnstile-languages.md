@@ -95,10 +95,14 @@ Looking at this item by item, we see:
    and patterns `e-` and `τ_out` matching the elaboration of `e` and its type,
    respectively.
 8. After the dashes comes the conclusion, which begins with `⊢`. The next part
-   specifies the elaboration of the term. Here, the meaning of the typed `λ`
-   is given in terms of Racket's [`#%plain-lambda`][5] (Turnstile uses the
-   convention of a `-` suffix for forms in the untyped/target language). The
-   final part describes the type of the expression.
+   specifies the elaboration of the term. Here, the meaning of the typed `λ` is
+   given in terms of Racket's [`#%plain-lambda`][5]. Turnstile uses the
+   convention of a `-` suffix for forms in the untyped/target language to avoid
+   conflicting names and confusion. Suffixed names are usually bound using
+   `postfix-in`, such as in `(require (postfix-in - racket/base))` to bind
+   `#%plain-lambda-`.
+9. Finally, we give the type of the term to the right of the `⇒`, referring to
+   variables bound in the premises.
    
 #### Renaming Typed Variables
    
@@ -506,14 +510,15 @@ macro):
 ```
 
 We now have the key ingredients to define a procedure, `walk/bind`, that will
-serve as the primary vehicle to perform type checking on a sequence of forms,
+serve as the primary vehicle to type check a sequence of forms,
 threading binding information through using a definition context. Processing
 sequences of defintions and expressions will iterate through them one at a time,
 and for each form `e`:
 
-- `local-expand` `e` using our internal definition context, resulting in an `e-`.
-- Retrieve the type of `e` from the metadata of `e-` using Turnstile's `typeof` helper.
-- Check if `e` defined a binding, in which case add it to the context.
+1. `local-expand` using our internal definition context, resulting in an `e-`.
+2. Retrieve the type of `e` from the metadata of `e-` using Turnstile's
+   [`typeof`][22] helper.
+3. Check if `e` defined a binding, in which case add it to the context.
 
 Aggregating the expanded syntax and type of each form as we go along, we get
 
@@ -587,6 +592,11 @@ interested reader:
            e ...))]))
 ```
 
+Finally, there's some question as to how to lift these ideas to an abstraction
+at the Turnstile level, so that future language authors don't have to muck
+around with `syntax-local-bind-syntaxes` and friends. If you have any ideas on
+this front, feel free to reach out.
+
 <!-- References -->
 
 [1]: http://docs.racket-lang.org/turnstile/The_Turnstile_Guide.html
@@ -610,3 +620,4 @@ interested reader:
 [19]: http://docs.racket-lang.org/syntax/stxparse-specifying.html
 [20]: http://docs.racket-lang.org/reference/syntax-model.html?#%28tech._internal._definition._context%29
 [21]: https://scholarship.rice.edu/handle/1911/17993
+[22]: http://docs.racket-lang.org/turnstile/The_Turnstile_Reference.html?q=typeof#%28def._%28%28lib._turnstile%2Fmain..rkt%29._typeof%29%29
