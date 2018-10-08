@@ -10,45 +10,45 @@ integrating type checking with Racket's existing tools for
 describing languages. The technique is described by fellow PRL'ers
 in the paper [*Type Systems as Macros*][3].
 
-Unsurprisingly, extensions to Racket are often, well, Racket-y. But
-unfortunately, Turnstile does not easily lend itself to expressing one of
-Racket's most ubiquitous idioms---naming local bindings with `define`. Early
-experience reports from Turnstile, including my own, indicate that language
-implementors very much desire to have `define`-like binding forms in their
-languages. In this blog post, I'm going to show you how to add `define`-like
-bindings to your Turnstile language by leveraging Racket's extensive
-meta-programming toolbox.
+Racket encourages language developers to take full advantage of [linguistic
+reuse][21] by defining new language forms in terms of existing constructs.
+Unsurprisingly, language extensions often retain some of the Racket-y flavor
+from the underlying constructs. Implementors save time and energy while users of
+the language benefit from the familiarity they already have with the Racket
+ecosystem.
+
+Unfortunately, Turnstile does not lend itself to expressing one of Racket's most
+ubiquitous idioms: naming local bindings with `define`. Early experience reports
+from Turnstile, including my own, suggest that language implementors very much
+desire to include `define`-like binding forms in their languages.
+
+This blog post provides a brief overview of what Turnstile is and how it works,
+an introduction to defining typed language forms, and how to equip these
+languages with a `define` binding form.
 
 <!-- more -->
 
-The code for this blog post can be found [in this gist][14]. To run it, you
-will need the Turnstile package (and Racket), which can be installed with `raco
-pkg install turnstile`.
+The code for this blog post can be found [in this gist][14]. To run it, you will
+need the Turnstile package, which can be installed with `raco pkg install
+turnstile`.
 
 ## Turnstile: Typechecking Intertwined with Elaboration
 
-### Linguistic Reuse
-
-In Racket, new language forms are often defined as syntax transformers (macros)
-that elaborate to forms that already exist. For example, `#lang lazy` defines
-lazy procedures as Racket `lambda`s that `force` their arguments when
-referenced. Similarly, lazy function application becomes a `#%app` that `delay`s
-the arguments.
-
-### Turnstile
-
-Turnstile provides a convenient way of defining syntax transformations to also
+Turnstile provides a convenient way of defining syntax transformations that also
 perform typechecking. Since processing the syntax of a form typically involves
-some amount of deconstruction of syntax and analysis, such as for error
-checking, it is a natural place to put the logic for typechecking. Thus, the
-process of macro expanding a program both typechecks and compiles it to the
-target language.
+some amount of analysis, such as for error checking, it is a natural place to
+put the logic for typechecking. With forms defined as such, macro expanding a
+program determines both a type and an elaborated term in the target language.
 
-When checking a form requires the types of subexpressions, Turnstile invokes the
-macro expander via `local-expand` (more on this below) to obtain its type and
-elaboration.
+While macro expansion proceeds outside-in, type information typically flows up
+from the leaves during checking. To reconcile the two directions, Turnstile
+language forms invoke the macro expander on subexpressions when their types are
+needed for the current rule. The expansion yields both the elaboration of the
+term and its type, or fails with an error. Turnstile abstracts over the process
+of invoking the expander on subterms, allowing implementors to describe the
+language in terms of type checking and elaboration.
 
-## Type Rules in Turnstile
+## Type & Elaboration Rules
 
 To get a feel for defining language forms in Turnstile, this section walks
 through the core of a simply-typed functional language.
@@ -153,11 +153,12 @@ with our typed `λ`:
 We can try out these new typed forms on a few examples:
 
 * `((λ ([x : Int]) (+ x 1)) 2)` successfully typechecks and yields `3`.
-* `((λ ([x : Int]) (+ x 1)))` raises an error `#%app: (λ ((x : Int)) (+ x 1)):
-  wrong number of arguments: expected 1, given 0`.
-* `((λ ([x : (→ Int Int)]) (x 1)) 2)` raises an error `#%app: type mismatch:
-expected (→ Int Int), given Int` because we pass a number instead of a
-  function.
+* `((λ ([x : Int]) (+ x 1)))` raises an error based on the check on lines 3 and
+  4 in the rule: "#%app: (λ ((x : Int)) (+ x 1)): wrong number of arguments: expected
+  1, given 0."
+* `((λ ([x : (→ Int Int)]) (x 1)) 2)` raises an error: "#%app: type mismatch:
+  expected (→ Int Int), given Int" as a consequence of using checking mode on
+  line 5 of the rule.
 
 ## Extending Our Language with Local Bindings
 
@@ -361,10 +362,10 @@ sub-expression in seqence. First in the sequence is a use of `define`, yielding
 ```
 
 Crucially, the expansion of our `define` form **stops** at this point, without
-examining the `begin-` form and its contained definitions. This is because
-Turnstile controls when expansion stops via the interface of
-[`local-expand`][16]. [`local-expand`][16] takes a parameter referred to as the
-*stop list* The stop list contains identifiers which, when encountered by the
+examining the `begin-` form and its contained definitions. The interface through
+which Turnstile invokes the macro expander, [`local-expand`][16], takes a
+parameter referred to as the *stop list* for stopping expansion at certain
+points. The stop list contains identifiers which, when encountered by the
 expander, halt expansion.
 
 The syntax output from typed forms created using Turnstile are wrapped with a
@@ -411,16 +412,21 @@ typecheck/expand, we need to be able to associate `almost` with a suitable type.
 Turnstile provides a way to set up such an association, but as we saw before,
 Turnstile's interface doesn't suit this scenario.
 
-[Internal definition contexts][10,20] are among the host of tools Racket provides
-for manipulating and transforming syntax. When using `local-expand`, we can
-optionally pass in a definition context containing binding information. If we
-create a definition context for the body of the function and extend it with each
-definition, then `local-expand`-ing references such as the above one should work
-out. Normally, Turnstile calls `local-expand` internally in accordance with the
-type rules we write down, but in order to use our own definition context we're
-going to have to call it ourselves.
+Racket has the notion of an [internal definition context][20] that allows
+definitions to be mixed with expressions. The syntax system exposes tools for
+creating and manipulating such contexts programmatically, allowing macro writers
+a great deal of power for manipulating the bindings in a program.
 
-We can create a definition context with [`syntax-local-make-definition-context`][10], as in
+When using `local-expand`, we can optionally pass in a definition context
+containing binding information. If we create a definition context for the body
+of the function and extend it with each definition, then `local-expand`-ing
+references such as the above one should work out. Normally, Turnstile calls
+`local-expand` internally in accordance with the type rules we write down, but
+in order to use our own definition context we're going to have to call it
+ourselves.
+
+We can create a definition context with
+[`syntax-local-make-definition-context`][10], as in
 
 ```racket
 (define def-ctx (syntax-local-make-definition-context))
@@ -603,3 +609,4 @@ interested reader:
 [18]: http://docs.racket-lang.org/syntax/stxparse-patterns.html
 [19]: http://docs.racket-lang.org/syntax/stxparse-specifying.html
 [20]: http://docs.racket-lang.org/reference/syntax-model.html?#%28tech._internal._definition._context%29
+[21]: https://scholarship.rice.edu/handle/1911/17993
